@@ -852,8 +852,8 @@ Item {
             z: 10
             x: modelData.horizontal ? (overlayWindow.panelOnRight ? parent.width - width : 0) : 18
             y: modelData.vertical ? parent.height - height : 18
-            width: corner ? 22 : modelData.horizontal ? 7 : parent.width - 36
-            height: corner ? 22 : modelData.vertical ? 7 : parent.height - 36
+            width: corner ? 24 : modelData.horizontal ? 10 : parent.width - 36
+            height: corner ? 24 : modelData.vertical ? 10 : parent.height - 36
             hoverEnabled: true
             cursorShape: corner ? (overlayWindow.panelOnRight ? Qt.SizeFDiagCursor : Qt.SizeBDiagCursor)
               : modelData.horizontal ? Qt.SizeHorCursor : Qt.SizeVerCursor
@@ -863,6 +863,16 @@ Item {
                 resizeHandle.modelData.horizontal, resizeHandle.modelData.vertical)
             }
             onReleased: root.saveState()
+
+            Rectangle {
+              // Light up the edge under the cursor so the handle is findable.
+              visible: !resizeHandle.corner && (resizeHandle.containsMouse || resizeHandle.pressed)
+              anchors.fill: parent
+              anchors.margins: 3
+              radius: 2
+              color: root.accent
+              opacity: 0.55
+            }
 
             Canvas {
               id: grip
