@@ -196,6 +196,33 @@ class NativeTests(unittest.TestCase):
                 self.assertEqual(monitor.hermes_last_reply("20261005_225026_cdc9cb"), "")
                 self.assertEqual(monitor.opencode_last_reply("ses_abc"), "")
 
+    def test_context_tokens_for_claude_and_opencode(self):
+        import sqlite3
+        monitor = module("herdr-monitor")
+        session = "33333333-3333-3333-3333-333333333333"
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            project = root / "claude" / "projects" / "-repo"
+            project.mkdir(parents=True)
+            usage = lambda n: {"input_tokens": 2, "cache_creation_input_tokens": 8, "cache_read_input_tokens": n}
+            (project / f"{session}.jsonl").write_text("\n".join(json.dumps(e) for e in [
+                {"type": "assistant", "message": {"usage": usage(100)}},
+                {"type": "assistant", "message": {"usage": usage(5000)}},
+                {"type": "assistant", "isSidechain": True, "message": {"usage": usage(9)}},
+                {"type": "user", "message": {"content": "next"}},
+            ]) + "\n")
+            (root / "data" / "opencode").mkdir(parents=True)
+            db = sqlite3.connect(root / "data" / "opencode" / "opencode.db")
+            db.execute("CREATE TABLE message (id TEXT, session_id TEXT, time_created INTEGER, data TEXT)")
+            db.execute("INSERT INTO message VALUES ('m', 'ses_abc', 1, ?)", (json.dumps(
+                {"role": "assistant", "tokens": {"input": 10, "cache": {"read": 200, "write": 5}}}),))
+            db.commit(); db.close()
+            with patch.dict(os.environ, {"CLAUDE_CONFIG_DIR": str(root / "claude"), "XDG_DATA_HOME": str(root / "data")}):
+                self.assertEqual(monitor.context_tokens({"agent": "claude", "agent_session": {"value": session}}), 5010)
+                self.assertEqual(monitor.context_tokens({"agent": "opencode", "agent_session": {"value": "ses_abc"}}), 215)
+                self.assertEqual(monitor.context_tokens({"agent": "hermes", "agent_session": {"value": "x"}}), 0)
+                self.assertEqual(monitor.context_tokens({"agent": "claude"}), 0)
+
     def test_read_only_roster(self):
         monitor = module("herdr-monitor")
         payloads = [{"result": {"agents": [{"pane_id": "w1:p1", "workspace_id": "w1", "tab_id": "t1"}]}},

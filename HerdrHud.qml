@@ -389,6 +389,15 @@ Item {
     if (index >= 0 && index < sortedAgents.length) selectAgent(String(sortedAgents[index].pane_id || ""))
   }
 
+  // Context size from the agent's own session store, e.g. " · 372k ctx".
+  function contextLabel(agent) {
+    var tokens = Number(agent ? agent.context_tokens : 0)
+    if (!isFinite(tokens) || tokens <= 0) return ""
+    var text = tokens >= 1000000 ? (tokens / 1000000).toFixed(1) + "M"
+      : tokens >= 1000 ? Math.round(tokens / 1000) + "k" : String(tokens)
+    return " · " + text + " ctx"
+  }
+
   function isReady(agent) {
     var status = String(agent ? agent.agent_status || "" : "")
     return status === "idle" || status === "done"
@@ -1048,6 +1057,7 @@ Item {
                     delegate: Rectangle {
                       id: agentRow
                       required property var modelData
+                      required property int index
 
                       width: ListView.view.width
                       height: 86
@@ -1115,11 +1125,25 @@ Item {
                             Layout.fillWidth: true
                             text: (root.unread[String(agentRow.modelData.pane_id || "")] ? "Unseen update · " : "")
                               + root.statusLabel(agentRow.modelData)
+                              + root.contextLabel(agentRow.modelData)
                             color: root.unread[String(agentRow.modelData.pane_id || "")] ? root.success : root.muted
                             font.family: root.chromeFont
                             font.pixelSize: 11
                             elide: Text.ElideRight
                           }
+                        }
+
+                        Text {
+                          // Matches the Alt+1-9 shortcut for this agent.
+                          visible: agentRow.index < 9
+                          Layout.alignment: Qt.AlignTop
+                          Layout.topMargin: 2
+                          text: String(agentRow.index + 1)
+                          color: root.muted
+                          opacity: 0.7
+                          font.family: root.chromeFont
+                          font.pixelSize: 11
+                          font.bold: true
                         }
                       }
                     }

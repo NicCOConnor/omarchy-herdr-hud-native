@@ -112,6 +112,7 @@ def roster() -> None:
         workspace_id = str(item.get("workspace_id", ""))
         item["workspace_label"] = labels.get(workspace_id, workspace_id or "Untitled space")
         item["tab_label"] = tab_labels.get(str(row.get("tab_id", "")), str(row.get("tab_id") or ""))
+        item["context_tokens"] = context_tokens(row)
         merged.append(item)
     response({"ok": True, "agents": merged})
 
@@ -237,6 +238,70 @@ def opencode_last_reply(session_id: str) -> str:
             if text:
                 return text
     return ""
+
+
+CONTEXT_TAIL = 256 * 1024
+
+
+def claude_context_tokens(session_id: str) -> int:
+    """Tokens in Claude's context as of its latest reply (input + cache)."""
+    path = claude_transcript(session_id)
+    if not path:
+        return 0
+    with path.open("rb") as handle:
+        handle.seek(max(0, path.stat().st_size - CONTEXT_TAIL))
+        lines = handle.read().splitlines()
+    for line in reversed(lines):
+        if b'"usage"' not in line:
+            continue
+        try:
+            entry = json.loads(line)
+        except ValueError:
+            continue
+        usage = (entry.get("message") or {}).get("usage")
+        if entry.get("type") == "assistant" and not entry.get("isSidechain") and isinstance(usage, dict):
+            return sum(int(usage.get(key) or 0) for key in
+                       ("input_tokens", "cache_creation_input_tokens", "cache_read_input_tokens"))
+    return 0
+
+
+def opencode_context_tokens(session_id: str) -> int:
+    if not re.fullmatch(r"ses_[A-Za-z0-9]+", session_id):
+        return 0
+    data = Path(os.environ.get("XDG_DATA_HOME") or Path.home() / ".local/share")
+    db = read_only_db(data / "opencode" / "opencode.db")
+    if not db:
+        return 0
+    with contextlib.closing(db):
+        for (raw,) in db.execute(
+                "SELECT data FROM message WHERE session_id = ? AND json_extract(data, '$.role') = 'assistant' "
+                "ORDER BY time_created DESC LIMIT 5", (session_id,)):
+            try:
+                tokens = json.loads(raw).get("tokens") or {}
+            except ValueError:
+                continue
+            cache = tokens.get("cache") or {}
+            total = int(tokens.get("input") or 0) + int(cache.get("read") or 0) + int(cache.get("write") or 0)
+            if total:
+                return total
+    return 0
+
+
+CONTEXT_READERS = {
+    "claude": claude_context_tokens,
+    "opencode": opencode_context_tokens,
+}
+
+
+def context_tokens(row: dict) -> int:
+    reader = CONTEXT_READERS.get(str(row.get("agent", "")))
+    session = (row.get("agent_session") or {}).get("value")
+    if not reader or not session:
+        return 0
+    try:
+        return reader(str(session))
+    except (OSError, ValueError, sqlite3.Error):
+        return 0
 
 
 # Agents whose replies can be read from their own session store, so alerts
