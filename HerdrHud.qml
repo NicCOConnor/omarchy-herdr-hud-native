@@ -55,6 +55,10 @@ Item {
   property string errorText: "Connecting to Herdr…"
   property string noticeText: ""
   property int rosterWidth: 196
+  property int panelWidth: 800
+  property int panelHeight: 590
+  readonly property int minPanelWidth: 560
+  readonly property int minPanelHeight: 380
   property var positions: ({})
   property int stateRevision: 0
   property bool stateReady: false
@@ -182,6 +186,8 @@ Item {
         if (typeof parsed.overlayVisible === "boolean") overlayVisible = parsed.overlayVisible
         if (parsed.positions && typeof parsed.positions === "object") positions = parsed.positions
         if (Number(parsed.rosterWidth) > 0) rosterWidth = clamp(Number(parsed.rosterWidth), 150, 330)
+        if (Number(parsed.panelWidth) > 0) panelWidth = Math.max(minPanelWidth, Number(parsed.panelWidth))
+        if (Number(parsed.panelHeight) > 0) panelHeight = Math.max(minPanelHeight, Number(parsed.panelHeight))
       }
     } catch (error) {
       positions = ({})
@@ -199,7 +205,9 @@ Item {
       launcherStyle: launcherStyle,
       overlayVisible: overlayVisible,
       positions: positions,
-      rosterWidth: Math.round(rosterWidth)
+      rosterWidth: Math.round(rosterWidth),
+      panelWidth: Math.round(panelWidth),
+      panelHeight: Math.round(panelHeight)
     }, null, 2) + "\n")
   }
 
@@ -688,10 +696,31 @@ Item {
       readonly property real bubbleCurrentY: bubble.y
       readonly property real panelRoomLeft: Math.max(1, bubble.x - root.edgeGap - 12)
       readonly property real panelRoomRight: Math.max(1, width - root.edgeGap - bubble.x - bubble.width - 12)
-      readonly property bool panelOnRight: panelRoomRight >= 800
-        || (panelRoomLeft < 800 && panelRoomRight >= panelRoomLeft)
+      readonly property bool panelOnRight: panelRoomRight >= root.panelWidth
+        || (panelRoomLeft < root.panelWidth && panelRoomRight >= panelRoomLeft)
       property real rosterDragStart: 0
       property real rosterWidthStart: 0
+      property point resizeStart: Qt.point(0, 0)
+      property size resizeStartSize: Qt.size(0, 0)
+
+      // The HUD is a layer-shell overlay, so Hyprland's window resizing does
+      // not apply; these handles resize it from its outer edge and bottom.
+      function beginResize(area, mouse) {
+        resizeStart = area.mapToItem(contentItem, mouse.x, mouse.y)
+        resizeStartSize = Qt.size(panelCard.width, panelCard.height)
+      }
+
+      function updateResize(area, mouse, horizontal, vertical) {
+        var point = area.mapToItem(contentItem, mouse.x, mouse.y)
+        if (horizontal) {
+          var dx = (point.x - resizeStart.x) * (panelOnRight ? 1 : -1)
+          root.panelWidth = root.clamp(resizeStartSize.width + dx, root.minPanelWidth,
+            Math.max(root.minPanelWidth, panelOnRight ? panelRoomRight : panelRoomLeft))
+        }
+        if (vertical)
+          root.panelHeight = root.clamp(resizeStartSize.height + point.y - resizeStart.y,
+            root.minPanelHeight, Math.max(root.minPanelHeight, height - 32))
+      }
 
       function focusTerminal() {
         if (panelVisible) terminalPane.focusTerminal()
@@ -748,9 +777,9 @@ Item {
       Ui.BorderSurface {
         id: panelCard
         visible: overlayWindow.panelVisible
-        width: Math.min(800, overlayWindow.panelOnRight
+        width: Math.min(root.panelWidth, overlayWindow.panelOnRight
           ? overlayWindow.panelRoomRight : overlayWindow.panelRoomLeft)
-        height: Math.max(1, Math.min(parent.height - 32, 590))
+        height: Math.max(1, Math.min(parent.height - 32, root.panelHeight))
         x: overlayWindow.panelOnRight ? bubble.x + bubble.width + 12 : bubble.x - width - 12
         y: root.clamp(bubble.y + bubble.height / 2 - 41,
           root.edgeGap, Math.max(root.edgeGap, parent.height - height - root.edgeGap))
@@ -763,6 +792,59 @@ Item {
           anchors.fill: parent
           visible: root.wowMode
           fillColor: root.panelFill
+        }
+
+        Repeater {
+          // Outer edge, bottom edge, and the outer bottom corner.
+          model: [
+            { horizontal: true, vertical: false },
+            { horizontal: false, vertical: true },
+            { horizontal: true, vertical: true }
+          ]
+          MouseArea {
+            id: resizeHandle
+            required property var modelData
+            readonly property bool corner: modelData.horizontal && modelData.vertical
+            z: 10
+            x: modelData.horizontal ? (overlayWindow.panelOnRight ? parent.width - width : 0) : 18
+            y: modelData.vertical ? parent.height - height : 18
+            width: corner ? 22 : modelData.horizontal ? 7 : parent.width - 36
+            height: corner ? 22 : modelData.vertical ? 7 : parent.height - 36
+            hoverEnabled: true
+            cursorShape: corner ? (overlayWindow.panelOnRight ? Qt.SizeFDiagCursor : Qt.SizeBDiagCursor)
+              : modelData.horizontal ? Qt.SizeHorCursor : Qt.SizeVerCursor
+            onPressed: function(mouse) { overlayWindow.beginResize(resizeHandle, mouse) }
+            onPositionChanged: function(mouse) {
+              if (pressed) overlayWindow.updateResize(resizeHandle, mouse,
+                resizeHandle.modelData.horizontal, resizeHandle.modelData.vertical)
+            }
+            onReleased: root.saveState()
+
+            Canvas {
+              id: grip
+              // A small grip so the corner handle is discoverable.
+              visible: resizeHandle.corner
+              anchors.fill: parent
+              opacity: resizeHandle.containsMouse || resizeHandle.pressed ? 0.9 : 0.4
+              onPaint: {
+                var ctx = getContext("2d")
+                ctx.reset()
+                ctx.strokeStyle = root.accent
+                ctx.lineWidth = 1.5
+                for (var i = 1; i <= 2; i++) {
+                  var o = 6 * i
+                  ctx.beginPath()
+                  if (overlayWindow.panelOnRight) { ctx.moveTo(width - 5, height - 5 - o); ctx.lineTo(width - 5 - o, height - 5) }
+                  else { ctx.moveTo(5, height - 5 - o); ctx.lineTo(5 + o, height - 5) }
+                  ctx.stroke()
+                }
+              }
+              Connections {
+                target: overlayWindow
+                function onPanelOnRightChanged() { grip.requestPaint() }
+              }
+            }
+          }
         }
 
         ColumnLayout {

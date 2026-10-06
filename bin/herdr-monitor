@@ -10,6 +10,7 @@ import shutil
 import subprocess
 import sys
 import time
+from pathlib import Path
 from typing import Any
 
 TIMEOUT = 12
@@ -136,12 +137,76 @@ def notification_preview(text: str) -> str:
         return "…" + text[-599:].lstrip()
     return text
 
+SESSION_ID = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
+TRANSCRIPT_TAIL = 512 * 1024
+
+
+def claude_transcript(session_id: str) -> Path | None:
+    """Locate a Claude Code session log, following /resume continuations."""
+    root = Path(os.environ.get("CLAUDE_CONFIG_DIR") or Path.home() / ".claude") / "projects"
+    found = None
+    for _ in range(8):
+        if not SESSION_ID.match(session_id):
+            break
+        matches = list(root.glob(f"*/{session_id}.jsonl"))
+        if not matches:
+            break
+        found = matches[0]
+        with found.open("rb") as handle:
+            handle.seek(max(0, found.stat().st_size - 4096))
+            last = handle.read().splitlines()[-1:] or [b"{}"]
+        try:
+            entry = json.loads(last[0])
+        except ValueError:
+            break
+        if entry.get("type") != "continued-in":
+            break
+        session_id = str(entry.get("continuedInSessionId", ""))
+    return found
+
+
+def claude_last_reply(session_id: str) -> str:
+    """Latest assistant text from Claude's own transcript, without touching the pane."""
+    path = claude_transcript(session_id)
+    if not path:
+        return ""
+    with path.open("rb") as handle:
+        handle.seek(max(0, path.stat().st_size - TRANSCRIPT_TAIL))
+        lines = handle.read().splitlines()
+    for line in reversed(lines):
+        try:
+            entry = json.loads(line)
+        except ValueError:
+            continue
+        if entry.get("type") != "assistant" or entry.get("isSidechain"):
+            continue
+        content = (entry.get("message") or {}).get("content")
+        texts = [str(p.get("text", "")) for p in content if isinstance(p, dict) and p.get("type") == "text"] \
+            if isinstance(content, list) else []
+        text = "\n".join(t for t in texts if t.strip()).strip()
+        if text:
+            return text
+    return ""
+
+
 def preview(pane_id: str, terminal_id: str) -> None:
+    rows = []
+
     def matches():
-        return any(row.get("pane_id") == pane_id and row.get("terminal_id") == terminal_id for row in agents())
+        rows[:] = agents()
+        return any(row.get("pane_id") == pane_id and row.get("terminal_id") == terminal_id for row in rows)
     if pane_id.startswith("-") or not re.fullmatch(r"term_[A-Za-z0-9_-]+", terminal_id) or not matches():
         raise BridgeError("The selected agent changed")
-    text = herdr("agent", "read", pane_id, "--source", "recent-unwrapped", "--lines", "12")
+    row = next(r for r in rows if r.get("pane_id") == pane_id)
+    session = (row.get("agent_session") or {}).get("value")
+    if row.get("agent") == "claude" and session:
+        text = claude_last_reply(str(session))
+        if text:
+            response({"preview": notification_preview(re.sub(r"[*`#]", "", text))})
+            return
+    # Visible screen only: alternate-screen agents (Claude Code) expose
+    # scrollback by scrolling the live pane, which the user would see.
+    text = herdr("agent", "read", pane_id, "--source", "visible")
     if not matches():
         raise BridgeError("The selected agent changed")
     response({"preview": notification_preview(text)})

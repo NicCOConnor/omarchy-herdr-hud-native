@@ -96,6 +96,30 @@ class NativeTests(unittest.TestCase):
             monitor.preview("w1:p1", "term_safe")
         self.assertEqual(json.loads(output.getvalue()), {"preview": ""})
 
+    def test_claude_preview_reads_transcript_not_pane(self):
+        monitor = module("herdr-monitor")
+        first, second = "11111111-1111-1111-1111-111111111111", "22222222-2222-2222-2222-222222222222"
+        agent = {"pane_id": "w1:p1", "terminal_id": "term_safe", "agent": "claude",
+                 "agent_session": {"value": first}}
+        entries = [
+            {"type": "assistant", "message": {"content": [{"type": "text", "text": "Older reply"}]}},
+            {"type": "assistant", "message": {"content": [{"type": "text", "text": "Fixed the **build**."},
+                                                          {"type": "tool_use", "name": "Bash"}]}},
+            {"type": "assistant", "isSidechain": True, "message": {"content": [{"type": "text", "text": "subagent"}]}},
+        ]
+        output = io.StringIO()
+        with tempfile.TemporaryDirectory() as directory, patch.dict(os.environ, {"CLAUDE_CONFIG_DIR": directory}):
+            project = Path(directory) / "projects" / "-repo"
+            project.mkdir(parents=True)
+            (project / f"{first}.jsonl").write_text(json.dumps({"type": "continued-in", "continuedInSessionId": second}) + "\n")
+            (project / f"{second}.jsonl").write_text("\n".join(json.dumps(e) for e in entries) + "\n")
+            with patch.object(monitor, "agents", return_value=[agent]), \
+                    patch.object(monitor, "herdr") as herdr, contextlib.redirect_stdout(output):
+                monitor.preview("w1:p1", "term_safe")
+            herdr.assert_not_called()
+            self.assertIsNone(monitor.claude_transcript("../../etc/passwd"))
+        self.assertEqual(json.loads(output.getvalue()), {"preview": "Fixed the build."})
+
     def test_read_only_roster(self):
         monitor = module("herdr-monitor")
         payloads = [{"result": {"agents": [{"pane_id": "w1:p1", "workspace_id": "w1", "tab_id": "t1"}]}},
