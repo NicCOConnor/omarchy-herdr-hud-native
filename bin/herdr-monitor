@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Bounded read-only Herdr metadata for the Omarchy HUD."""
+import contextlib
 import ctypes
 import json
 import os
@@ -7,6 +8,7 @@ import re
 import selectors
 import signal
 import shutil
+import sqlite3
 import subprocess
 import sys
 import time
@@ -189,6 +191,63 @@ def claude_last_reply(session_id: str) -> str:
     return ""
 
 
+def read_only_db(path: Path) -> sqlite3.Connection | None:
+    if not path.is_file():
+        return None
+    return sqlite3.connect(path.as_uri() + "?mode=ro", uri=True, timeout=1)
+
+
+def hermes_last_reply(session_id: str) -> str:
+    """Latest Hermes assistant reply from its session database."""
+    if not re.fullmatch(r"[0-9]{8}_[0-9]{6}_[0-9a-f]+", session_id):
+        return ""
+    home = Path(os.environ.get("HERMES_HOME") or Path.home() / ".hermes")
+    db = read_only_db(home / "state.db")
+    if not db:
+        return ""
+    with contextlib.closing(db):
+        row = db.execute(
+            "SELECT content FROM messages WHERE session_id = ? AND role = 'assistant' "
+            "AND content IS NOT NULL AND trim(content) != '' ORDER BY id DESC LIMIT 1", (session_id,)).fetchone()
+    return str(row[0]).strip() if row else ""
+
+
+def opencode_last_reply(session_id: str) -> str:
+    """Latest OpenCode assistant reply: the text parts of its last message."""
+    if not re.fullmatch(r"ses_[A-Za-z0-9]+", session_id):
+        return ""
+    data = Path(os.environ.get("XDG_DATA_HOME") or Path.home() / ".local/share")
+    db = read_only_db(data / "opencode" / "opencode.db")
+    if not db:
+        return ""
+    with contextlib.closing(db):
+        messages = db.execute(
+            "SELECT id FROM message WHERE session_id = ? AND json_extract(data, '$.role') = 'assistant' "
+            "ORDER BY time_created DESC LIMIT 5", (session_id,)).fetchall()
+        for (message_id,) in messages:
+            texts = []
+            for (raw,) in db.execute("SELECT data FROM part WHERE message_id = ? ORDER BY id", (message_id,)):
+                try:
+                    part = json.loads(raw)
+                except ValueError:
+                    continue
+                if part.get("type") == "text" and not part.get("synthetic") and not part.get("ignored"):
+                    texts.append(str(part.get("text", "")))
+            text = "\n".join(t for t in texts if t.strip()).strip()
+            if text:
+                return text
+    return ""
+
+
+# Agents whose replies can be read from their own session store, so alerts
+# can show a preview without reading (or scrolling) the live pane.
+SESSION_READERS = {
+    "claude": claude_last_reply,
+    "hermes": hermes_last_reply,
+    "opencode": opencode_last_reply,
+}
+
+
 def preview(pane_id: str, terminal_id: str) -> None:
     rows = []
 
@@ -199,8 +258,12 @@ def preview(pane_id: str, terminal_id: str) -> None:
         raise BridgeError("The selected agent changed")
     row = next(r for r in rows if r.get("pane_id") == pane_id)
     session = (row.get("agent_session") or {}).get("value")
-    if row.get("agent") == "claude" and session:
-        text = claude_last_reply(str(session))
+    reader = SESSION_READERS.get(str(row.get("agent", "")))
+    if reader and session:
+        try:
+            text = reader(str(session))
+        except (OSError, sqlite3.Error):
+            text = ""
         if text:
             response({"preview": notification_preview(re.sub(r"[*`#]", "", text))})
             return

@@ -145,6 +145,57 @@ class NativeTests(unittest.TestCase):
             self.assertIsNone(monitor.claude_transcript("../../etc/passwd"))
         self.assertEqual(json.loads(output.getvalue()), {"preview": "Fixed the build."})
 
+    def test_hermes_and_opencode_previews_read_session_stores(self):
+        import sqlite3
+        monitor = module("herdr-monitor")
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            hermes = root / "hermes"
+            hermes.mkdir()
+            db = sqlite3.connect(hermes / "state.db")
+            db.execute("CREATE TABLE messages (id INTEGER PRIMARY KEY, session_id TEXT, role TEXT, content TEXT)")
+            db.executemany("INSERT INTO messages (session_id, role, content) VALUES (?, ?, ?)", [
+                ("20261005_225026_cdc9cb", "assistant", "Older reply"),
+                ("20261005_225026_cdc9cb", "assistant", "Theme applied."),
+                ("20261005_225026_cdc9cb", "tool", "tool output"),
+                ("20261005_225026_cdc9cb", "assistant", ""),
+                ("20261005_000000_ffffff", "assistant", "Other session"),
+            ])
+            db.commit(); db.close()
+            data = root / "data"
+            (data / "opencode").mkdir(parents=True)
+            db = sqlite3.connect(data / "opencode" / "opencode.db")
+            db.execute("CREATE TABLE message (id TEXT PRIMARY KEY, session_id TEXT, time_created INTEGER, data TEXT)")
+            db.execute("CREATE TABLE part (id TEXT PRIMARY KEY, message_id TEXT, data TEXT)")
+            db.executemany("INSERT INTO message VALUES (?, ?, ?, ?)", [
+                ("msg_1", "ses_abc", 1, json.dumps({"role": "assistant"})),
+                ("msg_2", "ses_abc", 2, json.dumps({"role": "assistant"})),
+                ("msg_3", "ses_abc", 3, json.dumps({"role": "user"})),
+            ])
+            db.executemany("INSERT INTO part VALUES (?, ?, ?)", [
+                ("prt_1", "msg_1", json.dumps({"type": "text", "text": "Old"})),
+                ("prt_2", "msg_2", json.dumps({"type": "reasoning", "text": "secret"})),
+                ("prt_3", "msg_2", json.dumps({"type": "text", "text": "Fixed it."})),
+                ("prt_4", "msg_2", json.dumps({"type": "text", "text": "hidden", "synthetic": True})),
+            ])
+            db.commit(); db.close()
+            with patch.dict(os.environ, {"HERMES_HOME": str(hermes), "XDG_DATA_HOME": str(data)}):
+                self.assertEqual(monitor.hermes_last_reply("20261005_225026_cdc9cb"), "Theme applied.")
+                self.assertEqual(monitor.opencode_last_reply("ses_abc"), "Fixed it.")
+                self.assertEqual(monitor.hermes_last_reply("../../etc"), "")
+                self.assertEqual(monitor.opencode_last_reply("ses_x' OR 1=1--"), "")
+                agent = {"pane_id": "w1:p1", "terminal_id": "term_safe", "agent": "opencode",
+                         "agent_session": {"value": "ses_abc"}}
+                output = io.StringIO()
+                with patch.object(monitor, "agents", return_value=[agent]), \
+                        patch.object(monitor, "herdr") as herdr, contextlib.redirect_stdout(output):
+                    monitor.preview("w1:p1", "term_safe")
+                herdr.assert_not_called()
+                self.assertEqual(json.loads(output.getvalue()), {"preview": "Fixed it."})
+            with patch.dict(os.environ, {"HERMES_HOME": str(root / "missing"), "XDG_DATA_HOME": str(root / "missing")}):
+                self.assertEqual(monitor.hermes_last_reply("20261005_225026_cdc9cb"), "")
+                self.assertEqual(monitor.opencode_last_reply("ses_abc"), "")
+
     def test_read_only_roster(self):
         monitor = module("herdr-monitor")
         payloads = [{"result": {"agents": [{"pane_id": "w1:p1", "workspace_id": "w1", "tab_id": "t1"}]}},
