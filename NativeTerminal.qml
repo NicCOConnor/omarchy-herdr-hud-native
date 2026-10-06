@@ -13,6 +13,11 @@ Item {
   property bool selecting: false
   property bool clearingSelection: false
   property alias terminalItem: terminal
+  // Touchpads emit many tiny wheel events and the terminal turns each one into
+  // a full scroll step. Accumulate them and forward one step per this many
+  // pixels of finger travel; a mouse wheel still scrolls one step per notch.
+  property real touchpadStepPixels: 48
+  property real wheelRemainder: 0
   property alias terminalSession: session
   signal ended()
 
@@ -89,6 +94,25 @@ Item {
         stopTimeout.stop()
         root.ended()
       }
+    }
+  }
+
+  MouseArea {
+    anchors.fill: terminal
+    z: 1
+    acceptedButtons: Qt.NoButton
+    enabled: terminal.enabled
+    onWheel: function(wheel) {
+      if (wheel.pixelDelta.y !== 0)
+        root.wheelRemainder += wheel.pixelDelta.y * 120 / root.touchpadStepPixels
+      else
+        root.wheelRemainder += wheel.angleDelta.y
+      while (Math.abs(root.wheelRemainder) >= 120) {
+        var step = root.wheelRemainder > 0 ? 120 : -120
+        terminal.simulateWheel(wheel.x, wheel.y, 0, wheel.modifiers, Qt.point(0, step))
+        root.wheelRemainder -= step
+      }
+      wheel.accepted = true
     }
   }
 

@@ -365,6 +365,28 @@ Item {
     })
   }
 
+  // Keyboard agent switching, in the roster's displayed order.
+  function selectRelative(step) {
+    var list = sortedAgents
+    if (!list.length) return
+    var current = -1
+    for (var i = 0; i < list.length; i++) if (String(list[i].pane_id || "") === selectedPane) current = i
+    var next = current < 0 ? 0 : (current + step + list.length) % list.length
+    selectAgent(String(list[next].pane_id || ""))
+  }
+
+  // IPC entry points for Hyprland bindings; open the panel if it is closed.
+  function nextAgent(_arg) { showAgentStep(1) }
+  function previousAgent(_arg) { showAgentStep(-1) }
+  function showAgentStep(step) {
+    if (opened && overlayVisible) selectRelative(step)
+    else open("{}")
+  }
+
+  function selectIndex(index) {
+    if (index >= 0 && index < sortedAgents.length) selectAgent(String(sortedAgents[index].pane_id || ""))
+  }
+
   function isReady(agent) {
     var status = String(agent ? agent.agent_status || "" : "")
     return status === "idle" || status === "done"
@@ -724,6 +746,26 @@ Item {
 
       function focusTerminal() {
         if (panelVisible) terminalPane.focusTerminal()
+      }
+
+      Shortcut {
+        sequence: "Alt+Down"
+        enabled: overlayWindow.panelVisible
+        onActivated: root.selectRelative(1)
+      }
+      Shortcut {
+        sequence: "Alt+Up"
+        enabled: overlayWindow.panelVisible
+        onActivated: root.selectRelative(-1)
+      }
+      Instantiator {
+        model: 9
+        delegate: Shortcut {
+          required property int index
+          sequence: "Alt+" + (index + 1)
+          enabled: overlayWindow.panelVisible
+          onActivated: root.selectIndex(index)
+        }
       }
 
       readonly property alias terminalContainer: terminalSlot

@@ -102,7 +102,7 @@ Item {
       Layout.fillWidth: true
       Text {
         Layout.fillWidth: true
-        text: root.clientRunning && !root.stopping ? "Ctrl+Shift+V to paste · Shift+drag to select & copy · Esc goes to agent" : root.message
+        text: root.clientRunning && !root.stopping ? "Super+Ctrl+↑↓ switch agents · Ctrl+Shift+V to paste · Shift+drag to select & copy · Esc goes to agent" : root.message
         color: root.muted
         font.family: root.chromeFont
         font.pixelSize: 11
