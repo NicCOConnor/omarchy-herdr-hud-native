@@ -1115,7 +1115,8 @@ Item {
                           }
                           Text {
                             Layout.fillWidth: true
-                            text: root.agentName(agentRow.modelData)
+                            // Short line, so the context size isn't elided in a narrow roster.
+                            text: root.agentName(agentRow.modelData) + root.contextLabel(agentRow.modelData)
                             color: root.muted
                             font.family: root.chromeFont
                             font.pixelSize: 12
@@ -1125,7 +1126,6 @@ Item {
                             Layout.fillWidth: true
                             text: (root.unread[String(agentRow.modelData.pane_id || "")] ? "Unseen update · " : "")
                               + root.statusLabel(agentRow.modelData)
-                              + root.contextLabel(agentRow.modelData)
                             color: root.unread[String(agentRow.modelData.pane_id || "")] ? root.success : root.muted
                             font.family: root.chromeFont
                             font.pixelSize: 11
