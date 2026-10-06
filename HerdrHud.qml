@@ -6,7 +6,6 @@ import Quickshell.Io
 import Quickshell.Wayland
 import qs.Commons
 import qs.Ui as Ui
-import "Roster.js" as Roster
 import "Alerts.js" as Alerts
 import "."
 
@@ -36,7 +35,10 @@ Item {
   property var agents: []
   property string selectedPane: ""
   property var unread: ({})
-  readonly property var sortedAgents: Roster.sorted(agents, unread)
+  // Keep Herdr's own order (workspace order). Re-sorting by attention moved
+  // agents as soon as they were selected or changed status, which sent
+  // prompts to the wrong agent; status glyphs and badges show attention.
+  readonly property var sortedAgents: agents
   property var lastSequence: ({})
   property var alertQueue: []
   property bool alertsEnabled: true

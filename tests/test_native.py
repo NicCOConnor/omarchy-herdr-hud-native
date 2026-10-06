@@ -173,6 +173,12 @@ class NativeTests(unittest.TestCase):
         self.assertIn("root.queueAlert(agent)", source)
         self.assertNotIn("QMLTermWidget", source)
 
+    def test_roster_keeps_herdr_order(self):
+        # Re-sorting by attention moved agents under the cursor on selection.
+        source = (NATIVE / "HerdrHud.qml").read_text()
+        self.assertIn("readonly property var sortedAgents: agents\n", source)
+        self.assertNotIn("Roster.sorted(", source)
+
     def test_release_structure(self):
         for name in ("Roster.js", "Alerts.js", "WowFrame.qml", "WowLauncher.qml", "LICENSE"):
             self.assertTrue((NATIVE / name).exists(), name)
