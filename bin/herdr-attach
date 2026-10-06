@@ -4,6 +4,35 @@ import os
 import re
 import shutil
 import sys
+from pathlib import Path
+
+# The HUD scrolls one line per wheel tick so touchpad scrolling can be smooth.
+# Herdr's attach client reads mouse_scroll_lines from its own config, so give
+# it a HUD-only copy of the user's config; the main Herdr client is unchanged.
+SCROLL_LINES = 1
+
+
+def scroll_config(home: Path | None = None) -> Path | None:
+    home = home or Path.home()
+    source = Path(os.environ.get("HERDR_CONFIG_PATH") or home / ".config/herdr/config.toml")
+    target = home / ".config/herdr-hud-native/herdr-attach.toml"
+    try:
+        text = source.read_text() if source.is_file() else ""
+        setting = f"mouse_scroll_lines = {SCROLL_LINES}"
+        if re.search(r"^\s*mouse_scroll_lines\s*=", text, re.M):
+            text = re.sub(r"^\s*mouse_scroll_lines\s*=.*$", setting, text, flags=re.M)
+        elif re.search(r"^\[ui\]\s*$", text, re.M):
+            text = re.sub(r"^\[ui\]\s*$", "[ui]\n" + setting, text, count=1, flags=re.M)
+        else:
+            text = text.rstrip("\n") + f"\n\n[ui]\n{setting}\n"
+        target.parent.mkdir(parents=True, exist_ok=True)
+        temporary = target.with_suffix(".tmp")
+        temporary.write_text(text)
+        temporary.replace(target)
+        return target
+    except OSError:
+        return None  # attach with the user's config rather than not at all
+
 
 def main(argv):
     if len(argv) != 2 or not re.fullmatch(r"term_[A-Za-z0-9_-]+", argv[1]):
@@ -11,6 +40,9 @@ def main(argv):
     executable = shutil.which("herdr")
     if not executable:
         raise ValueError("Herdr is not installed or not on PATH")
+    config = scroll_config()
+    if config:
+        os.environ["HERDR_CONFIG_PATH"] = str(config)
     os.execv(executable, [executable, "terminal", "attach", argv[1]])
 
 if __name__ == "__main__":

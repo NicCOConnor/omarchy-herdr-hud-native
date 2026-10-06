@@ -26,13 +26,38 @@ def module(name):
 class NativeTests(unittest.TestCase):
     def test_attach_execs_only_explicit_target(self):
         attach = module("herdr-attach")
-        with patch.object(attach.shutil, "which", return_value="/usr/bin/herdr"), patch.object(attach.os, "execv") as execute:
+        with patch.object(attach.shutil, "which", return_value="/usr/bin/herdr"), patch.object(attach.os, "execv") as execute, \
+                patch.object(attach, "scroll_config", return_value=None):
             attach.main(["attach", "term_safe"])
             execute.assert_called_once_with("/usr/bin/herdr", ["/usr/bin/herdr", "terminal", "attach", "term_safe"])
             for target in ("--takeover", "w1:p1", "term_x;touch /tmp/unsafe", ""):
                 with self.assertRaises(ValueError):
                     attach.main(["attach", target])
             self.assertEqual(execute.call_count, 1)
+
+    def test_attach_uses_hud_only_one_line_scroll_config(self):
+        attach = module("herdr-attach")
+        with tempfile.TemporaryDirectory() as directory, patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("HERDR_CONFIG_PATH", None)
+            home = Path(directory)
+            user = home / ".config/herdr/config.toml"
+            user.parent.mkdir(parents=True)
+            cases = {
+                "[keys]\nprefix = \"ctrl+b\"\n\n[ui]\nmouse_capture = true\n": "[ui]\nmouse_scroll_lines = 1\nmouse_capture = true",
+                "[ui]\n# mouse_scroll_lines = 3\nmouse_scroll_lines = 5\n": "mouse_scroll_lines = 1",
+                "[keys]\nprefix = \"ctrl+b\"\n": "[ui]\nmouse_scroll_lines = 1",
+            }
+            for original, expected in cases.items():
+                user.write_text(original)
+                path = attach.scroll_config(home)
+                self.assertEqual(path, home / ".config/herdr-hud-native/herdr-attach.toml")
+                self.assertIn(expected, path.read_text())
+                self.assertNotIn("mouse_scroll_lines = 5", path.read_text())
+                self.assertEqual(user.read_text(), original)
+            with patch.object(attach.shutil, "which", return_value="/usr/bin/herdr"), \
+                    patch.object(attach.os, "execv"), patch.object(attach.Path, "home", return_value=home):
+                attach.main(["attach", "term_safe"])
+                self.assertEqual(os.environ["HERDR_CONFIG_PATH"], str(home / ".config/herdr-hud-native/herdr-attach.toml"))
 
     def test_missing_herdr_never_execs_shell(self):
         attach = module("herdr-attach")
