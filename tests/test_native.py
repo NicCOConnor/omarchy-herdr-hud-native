@@ -207,7 +207,7 @@ class NativeTests(unittest.TestCase):
             usage = lambda n: {"input_tokens": 2, "cache_creation_input_tokens": 8, "cache_read_input_tokens": n}
             (project / f"{session}.jsonl").write_text("\n".join(json.dumps(e) for e in [
                 {"type": "assistant", "message": {"usage": usage(100)}},
-                {"type": "assistant", "message": {"usage": usage(5000)}},
+                {"type": "assistant", "message": {"model": "claude-opus-5-5", "usage": usage(5000)}},
                 {"type": "assistant", "isSidechain": True, "message": {"usage": usage(9)}},
                 {"type": "user", "message": {"content": "next"}},
             ]) + "\n")
@@ -215,13 +215,21 @@ class NativeTests(unittest.TestCase):
             db = sqlite3.connect(root / "data" / "opencode" / "opencode.db")
             db.execute("CREATE TABLE message (id TEXT, session_id TEXT, time_created INTEGER, data TEXT)")
             db.execute("INSERT INTO message VALUES ('m', 'ses_abc', 1, ?)", (json.dumps(
-                {"role": "assistant", "tokens": {"input": 10, "cache": {"read": 200, "write": 5}}}),))
+                {"role": "assistant", "providerID": "local", "modelID": "qwen",
+                 "tokens": {"input": 10, "cache": {"read": 200, "write": 5}}}),))
             db.commit(); db.close()
-            with patch.dict(os.environ, {"CLAUDE_CONFIG_DIR": str(root / "claude"), "XDG_DATA_HOME": str(root / "data")}):
-                self.assertEqual(monitor.context_tokens({"agent": "claude", "agent_session": {"value": session}}), 5010)
-                self.assertEqual(monitor.context_tokens({"agent": "opencode", "agent_session": {"value": "ses_abc"}}), 215)
-                self.assertEqual(monitor.context_tokens({"agent": "hermes", "agent_session": {"value": "x"}}), 0)
-                self.assertEqual(monitor.context_tokens({"agent": "claude"}), 0)
+            (root / "config" / "opencode").mkdir(parents=True)
+            (root / "config" / "opencode" / "opencode.jsonc").write_text(
+                '// comment\n{"provider": {"local": {"models": {"qwen": {"limit": {"context": 261120}}}}}}')
+            env = {"CLAUDE_CONFIG_DIR": str(root / "claude"), "XDG_DATA_HOME": str(root / "data"),
+                   "XDG_CONFIG_HOME": str(root / "config")}
+            with patch.dict(os.environ, env):
+                self.assertEqual(monitor.context_usage({"agent": "claude", "agent_session": {"value": session}}), (5010, 1_000_000))
+                self.assertEqual(monitor.context_usage({"agent": "opencode", "agent_session": {"value": "ses_abc"}}), (215, 261120))
+                self.assertEqual(monitor.context_usage({"agent": "hermes", "agent_session": {"value": "x"}}), (0, 0))
+                self.assertEqual(monitor.context_usage({"agent": "claude"}), (0, 0))
+                self.assertEqual(monitor.claude_context_limit("claude-haiku-4-5"), 200_000)
+                self.assertEqual(monitor.claude_context_limit("gpt-5"), 0)
 
     def test_read_only_roster(self):
         monitor = module("herdr-monitor")

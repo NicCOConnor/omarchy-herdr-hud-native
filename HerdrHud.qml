@@ -389,13 +389,30 @@ Item {
     if (index >= 0 && index < sortedAgents.length) selectAgent(String(sortedAgents[index].pane_id || ""))
   }
 
-  // Context size from the agent's own session store, e.g. " · 372k ctx".
+  function tokenText(tokens) {
+    if (tokens >= 1000000) return (tokens / 1000000).toFixed(tokens % 1000000 ? 1 : 0) + "M"
+    return tokens >= 1000 ? Math.round(tokens / 1000) + "k" : String(tokens)
+  }
+
+  // Context size from the agent's own session store, e.g. "372k/1M",
+  // colored by how full the window is: green < 50%, amber < 80%, red above.
+  function contextColor(agent) {
+    var tokens = Number(agent ? agent.context_tokens : 0)
+    var limit = Number(agent ? agent.context_limit : 0)
+    if (!(limit > 0)) return accent
+    var used = tokens / limit
+    return used >= 0.8 ? statusBlocked : used >= 0.5 ? statusWorking : statusIdle
+  }
+
   function contextLabel(agent) {
     var tokens = Number(agent ? agent.context_tokens : 0)
     if (!isFinite(tokens) || tokens <= 0) return ""
-    var text = tokens >= 1000000 ? (tokens / 1000000).toFixed(1) + "M"
-      : tokens >= 1000 ? Math.round(tokens / 1000) + "k" : String(tokens)
-    return " · " + text + " ctx"
+    var limit = Number(agent ? agent.context_limit : 0)
+    return tokenText(tokens) + (limit > 0 ? "/" + tokenText(limit) : " ctx")
+  }
+
+  function escapeHtml(text) {
+    return String(text).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
   }
 
   function isReady(agent) {
@@ -1116,7 +1133,12 @@ Item {
                           Text {
                             Layout.fillWidth: true
                             // Short line, so the context size isn't elided in a narrow roster.
-                            text: root.agentName(agentRow.modelData) + root.contextLabel(agentRow.modelData)
+                            textFormat: Text.StyledText
+                            text: root.escapeHtml(root.agentName(agentRow.modelData))
+                              + (root.contextLabel(agentRow.modelData)
+                                ? " · <font color=\"" + root.contextColor(agentRow.modelData) + "\"><b>"
+                                  + root.contextLabel(agentRow.modelData) + "</b></font>"
+                                : "")
                             color: root.muted
                             font.family: root.chromeFont
                             font.pixelSize: 12
