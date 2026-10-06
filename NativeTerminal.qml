@@ -12,6 +12,7 @@ Item {
   property bool inputEnabled: true
   property bool selecting: false
   property bool clearingSelection: false
+  property bool endedSent: false
   property alias terminalItem: terminal
   // Touchpads emit many tiny wheel events and the terminal turns each one into
   // a full scroll step. Accumulate them and forward one step per this many
@@ -20,6 +21,15 @@ Item {
   property real wheelRemainder: 0
   property alias terminalSession: session
   signal ended()
+
+  function finish() {
+    if (endedSent) return
+    endedSent = true
+    clientRunning = false
+    stopTimeout.stop()
+    abandonTimeout.stop()
+    ended()
+  }
 
   function copyAndClearSelection() {
     if (selecting || stopping) return
@@ -49,7 +59,7 @@ Item {
     if (clientRunning) {
       session.sendSignal(15)
       stopTimeout.start()
-    } else ended()
+    } else finish()
   }
 
   function applyPalette() {
@@ -89,11 +99,7 @@ Item {
         root.clientRunning = true
         root.focusTerminal()
       }
-      onFinished: {
-        root.clientRunning = false
-        stopTimeout.stop()
-        root.ended()
-      }
+      onFinished: root.finish()
     }
   }
 
@@ -135,6 +141,18 @@ Item {
   Timer {
     id: stopTimeout
     interval: 1500
-    onTriggered: if (root.clientRunning) session.sendSignal(9)
+    onTriggered: {
+      if (root.clientRunning) session.sendSignal(9)
+      abandonTimeout.start()
+    }
+  }
+
+  // If the session never reports finishing (the client already died, or
+  // the signal was lost), stop waiting so switching agents can't wedge on
+  // "Disconnecting…".
+  Timer {
+    id: abandonTimeout
+    interval: 1500
+    onTriggered: if (root.stopping) root.finish()
   }
 }
